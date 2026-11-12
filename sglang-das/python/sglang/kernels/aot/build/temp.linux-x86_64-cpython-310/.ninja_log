@@ -1,0 +1,23 @@
+# ninja log v5
+3	9846	1793842741017374578	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/memory/weak_ref_tensor.o	6fac6c275b8455bb
+2	11304	1793842742464370820	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/deepseek_v4_topk.o	e742d6d455b40c46
+2	12248	1793842743409368365	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/topk.o	73461fbada6923c1
+1	22022	1793842753179342988	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/attention/merge_attn_states.o	48abeb6b39ac4c45
+4	35187	1793842766345308789	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/speculative/eagle_utils.o	63111f26e9afab84
+1	38985	1793842770120298984	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/common_extension_rocm.o	67a6391b37398c8f
+3	59854	1793842790993244767	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/grammar/apply_token_bitmask_inplace_cuda.o	25fd5c89092ff19f
+2	59996	1793842791134244400	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/l2norm_kernel.o	324c76d32001f7a9
+2	60066	1793842791216244187	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/concat_mla_absorb_q_hcu.o	1da5de4e01b42065
+4	61179	1793842792329241296	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/moe/moe_align_kernel.o	213da5b3a111f70a
+2	61528	1793842792662240432	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/pos_enc.o	94cf080676ad4da8
+4	62594	1793842793719237686	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/sgl_diffusion/minimax_h3_rope.o	e49b65ba29d84dbb
+1	62710	1793842793859237322	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/activation.o	6d3453c9c2e6b058
+1	63664	1793842794795234891	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/attention/decode_metadata.o	d38d1951fd909952
+3	64149	1793842795297233587	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/kvcacheio/transfer.o	6a5d888805267d66
+1	64695	1793842795833232195	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/allreduce/deterministic_all_reduce.o	e51d1f75d7d5fca
+2	64856	1793842795981231810	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/dsv4_norm_rope.o	6e4cdbb02686f9a4
+1	65812	1793842796956229278	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/allreduce/custom_all_reduce.o	2162d6eb67dc6619
+4	66763	1793842797910226800	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/moe/moe_topk_sigmoid_kernels.o	1fe9249216743ce7
+3	67226	1793842798367225613	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/gemm/per_token_quant_fp8.o	c505dc5eb656e6da
+4	70527	1793842801672217028	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/moe/moe_topk_softmax_kernels.o	d9f2a6c282005d1a
+1	112325	1793842843474108448	/data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/allreduce/quick_all_reduce.o	78671b2fe898a199

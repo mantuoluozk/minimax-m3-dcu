@@ -1,0 +1,20 @@
+{
+  "upstream": "2c841655fe7852cde42eaaff2c1d414cf4038df1",
+  "prefill_archive_sha256": "f64ee086762cbfdc11806b866c9b9922af9d4cf5d6479d14cab30d8b7b928d02",
+  "decode_candidate_archive_sha256": "da4995a72fcb018f42dc0c736c02045ae9275e50056ddd7280627e05b993ccf5",
+  "prefill_files": 4719,
+  "decode_files": 4718,
+  "decode_overlay_sha256": {
+    "sglang/kernels/ops/attention/minimax_m3_qk_norm_rope.py": "a416226a0e090ac76cc6be0522d5cc58e4a4f5af43d91e97ef77387cd8098100",
+    "sglang/srt/distributed/bootstrap.py": "f52c75086a1f2cd3367ae45b285c1d826bd8f04235880795bc9b3f7eda751e66",
+    "sglang/srt/entrypoints/http_server.py": "793d32931089ccefeba8303c2815096c05a74d8b7ef4478da270c6762cd23be2",
+    "sglang/srt/layers/attention/minimax_sparse_backend.py": "828d7bc767c43b3509ff1bc9360aab1372ff310457bcd11146bad377a7602c1c",
+    "sglang/srt/layers/deep_gemm_wrapper/entrypoint.py": "0d4c5fb7e2ec25643e59515c9e72e8f080886603a5416ee15b4284759e763fee",
+    "sglang/srt/layers/moe/token_dispatcher/deepep.py": "199fbe2ee6594fb0f581735509e0bf9ab3dbcb5cf46bee3265c7ae1972137198",
+    "sglang/srt/models/minimax_m3.py": "b10a577e50f1e67132aea42c4c8cd72cb861b51be837e6661b3fb2b55eca0d68",
+    "sglang/srt/server_args.py": "497838f67ba5a1e9459bb6ce903e4d3437de650b0f815ece9d734ba0911e4fdf"
+  },
+  "decode_removed": [
+    "m31_cp_pack.py"
+  ]
+}

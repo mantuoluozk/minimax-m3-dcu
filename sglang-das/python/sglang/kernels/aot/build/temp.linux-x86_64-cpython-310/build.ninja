@@ -1,0 +1,56 @@
+ninja_required_version = 1.3
+cxx = c++
+nvcc = /opt/dtk/bin/hipcc
+
+cflags = -Wno-unused-result -Wsign-compare -DNDEBUG -g -fwrapv -O2 -Wall -g -fstack-protector-strong -Wformat -Werror=format-security -g -fwrapv -O2 -fPIC -I/data/xsf/sglang-das/python/sglang/kernels/aot/include -I/data/xsf/sglang-das/python/sglang/kernels/aot/include/impl -I/data/xsf/sglang-das/python/sglang/kernels/aot/csrc -I/usr/local/lib/python3.10/dist-packages/torch/include -I/usr/local/lib/python3.10/dist-packages/torch/include/torch/csrc/api/include -I/usr/local/lib/python3.10/dist-packages/torch/include/THH -I/opt/dtk/include -I/usr/include/python3.10 -c
+post_cflags = -D__HIP_PLATFORM_AMD__=1 -DUSE_ROCM=1 -DHIPBLAS_V2 -DPYTORCH_DTK_VERSION=260400 -fPIC -D__HIP_PLATFORM_AMD__=1 -DUSE_ROCM=1 -DHIPBLAS_V2 -DPYTORCH_DTK_VERSION=260400 -fPIC -O3 -w -DSGLANG_HCU_AOT_FP8_QUANT=1 -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=common_ops -std=c++17
+cuda_cflags = -I/data/xsf/sglang-das/python/sglang/kernels/aot/include -I/data/xsf/sglang-das/python/sglang/kernels/aot/include/impl -I/data/xsf/sglang-das/python/sglang/kernels/aot/csrc -I/usr/local/lib/python3.10/dist-packages/torch/include -I/usr/local/lib/python3.10/dist-packages/torch/include/torch/csrc/api/include -I/usr/local/lib/python3.10/dist-packages/torch/include/THH -I/opt/dtk/include -I/usr/include/python3.10 -c
+cuda_post_cflags = -D__HIP_PLATFORM_AMD__=1 -DUSE_ROCM=1 -DHIPBLAS_V2 -DPYTORCH_DTK_VERSION=260400 -fPIC -DCUDA_HAS_FP16=1 -D__HIP_NO_HALF_OPERATORS__=1 -D__HIP_NO_HALF_CONVERSIONS__=1 -DHIP_ENABLE_WARP_SYNC_BUILTINS=1 -DNDEBUG -DOPERATOR_NAMESPACE=sgl_kernel -O3 -Xcompiler -fPIC -std=c++17 -DENABLE_BF16 -DENABLE_FP8 -DSGLANG_HCU_AOT_FP8_QUANT=1 -w -DTORCH_API_INCLUDE_EXTENSION_H -DTORCH_EXTENSION_NAME=common_ops --offload-arch=gfx906 --offload-arch=gfx926 --offload-arch=gfx928 --offload-arch=gfx936 --offload-arch=gfx938 -fno-gpu-rdc
+cuda_dlink_post_cflags = 
+sycl_dlink_post_cflags = 
+ldflags = 
+
+rule compile
+  command = $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags
+  depfile = $out.d
+  deps = gcc
+
+rule cuda_compile
+  command = $nvcc  $cuda_cflags -c $in -o $out $cuda_post_cflags
+
+
+
+
+
+
+
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/allreduce/custom_all_reduce.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/allreduce/custom_all_reduce.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/allreduce/deterministic_all_reduce.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/allreduce/deterministic_all_reduce.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/allreduce/quick_all_reduce.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/allreduce/quick_all_reduce.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/attention/decode_metadata.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/attention/decode_metadata.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/attention/merge_attn_states.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/attention/merge_attn_states.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/common_extension_rocm.o: compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/common_extension_rocm.cc
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/activation.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/elementwise/activation.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/concat_mla_absorb_q_hcu.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/elementwise/concat_mla_absorb_q_hcu.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/deepseek_v4_topk.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/elementwise/deepseek_v4_topk.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/dsv4_norm_rope.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/elementwise/dsv4_norm_rope.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/l2norm_kernel.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/elementwise/l2norm_kernel.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/pos_enc.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/elementwise/pos_enc.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/elementwise/topk.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/elementwise/topk.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/gemm/per_token_quant_fp8.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/gemm/per_token_quant_fp8.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/grammar/apply_token_bitmask_inplace_cuda.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/grammar/apply_token_bitmask_inplace_cuda.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/kvcacheio/transfer.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/kvcacheio/transfer.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/memory/weak_ref_tensor.o: compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/memory/weak_ref_tensor.cpp
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/moe/moe_align_kernel.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/moe/moe_align_kernel.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/moe/moe_topk_sigmoid_kernels.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/moe/moe_topk_sigmoid_kernels.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/moe/moe_topk_softmax_kernels.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/moe/moe_topk_softmax_kernels.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/sgl_diffusion/minimax_h3_rope.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/sgl_diffusion/minimax_h3_rope.hip
+build /data/xsf/sglang-das/python/sglang/kernels/aot/build/temp.linux-x86_64-cpython-310/csrc/speculative/eagle_utils.o: cuda_compile /data/xsf/sglang-das/python/sglang/kernels/aot/csrc/speculative/eagle_utils.hip
+
+
+
+
+
+
+
+
