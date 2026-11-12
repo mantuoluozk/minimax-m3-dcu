@@ -2,6 +2,37 @@
 
 MiniMax-M3 Channel FP8 W8A8 的海光 DCU 适配。验证拓扑为两台 8×BW1100，P 端 CP8，D 端 DP8/EP8，Mooncake 传输与 EAGLE3。
 
+## 从已有镜像构建
+
+先选一个与目标 DCU 和宿主机驱动匹配的 Linux AMD64 推理镜像，再把本仓库的 SGLang 源码和原生扩展构建进新镜像。基础镜像可通过 `BASE_IMAGE` 自选，需要提供兼容的 Python、PyTorch、DTK/HIP、DeepEP、DeepGEMM、LightOp、Mooncake 和 SGLang Router。P 端构建还需要 HIP 编译器、C++ 编译器和 Ninja。当前 Dockerfile 按 `/opt/dtk` 和 `gfx938` 构建扩展。
+
+```bash
+git clone https://github.com/mantuoluozk/minimax-m3-dcu.git
+cd minimax-m3-dcu
+
+BASE_IMAGE='<你的海光推理基础镜像:标签>'
+IMAGE='minimax-m3-dcu:custom'
+docker build --build-arg BASE_IMAGE="$BASE_IMAGE" -t "$IMAGE" .
+```
+
+Dockerfile 把仓库源码复制进镜像，生成 D 端运行时，并用基础镜像内的工具链编译 P 端原生扩展。启动时，`prefill` 和 `decode` 入口分别设置自己的 `PYTHONPATH`，使服务优先加载仓库里的 SGLang。也就是说，服务运行时用的是适配版本，基础镜像提供依赖。
+
+构建后可核对 Python 实际解析到的包路径：
+
+```bash
+docker run --rm --entrypoint python3 \
+  -e PYTHONPATH=/opt/minimax-m3-dcu/sglang-das/python:/opt/minimax-m3-dcu/build \
+  "$IMAGE" -c 'import importlib.util; print(importlib.util.find_spec("sglang").origin)'
+
+docker run --rm --entrypoint python3 \
+  -e PYTHONPATH=/opt/minimax-m3-dcu/runtime/decode \
+  "$IMAGE" -c 'import importlib.util; print(importlib.util.find_spec("sglang").origin)'
+```
+
+P 端应解析到 `/opt/minimax-m3-dcu/sglang-das/python/sglang/__init__.py`，D 端应解析到 `/opt/minimax-m3-dcu/runtime/decode/sglang/__init__.py`。只为 D 构建时可以传 `--build-arg BUILD_NATIVE=0` 跳过 P 端扩展编译。更换基础镜像后，在目标环境验证 P/D 启动和长请求。
+
+## 源码布局
+
 - `sglang-das/` 保存完整 SGLang DAS 源码，基于公开提交 `2c841655fe7852cde42eaaff2c1d414cf4038df1`。其中 `python/sglang` 取自已测 P 运行时，含 QK HIP、CP-v2 普通 Attention 兼容、FP8 packet 和 DeepGEMM E16 适配。
 - `deploy/decode-overlay/` 在构建时还原已测 D 运行时。D 保留 EAGLE3 和启动通信预热。原重叠候选补丁位于 `experiments/decode-recv-overlap/`，仅供复核。
 - `native/` 保存 LightOp 候选源码和 bindings。构建时使用基础镜像自带的 Torch、DTK、HIP 编译 gfx938 扩展。各依赖由基础镜像提供。
@@ -9,23 +40,9 @@ MiniMax-M3 Channel FP8 W8A8 的海光 DCU 适配。验证拓扑为两台 8×BW11
 
 `experiments/prefill-cp/` 保留 CP、QK 及 raw scatter 的阶段补丁，`experiments/oai-triton/` 保留按当前 Triton 量化契约适配的融合候选。候选文件对应各自实验基线，默认镜像使用已测 QK、CP-v2 和 FP8 packet。
 
-## 构建镜像
-
-在能够访问海光基础镜像的 Linux AMD64 Docker 构建机上运行。原实测 P、D 的基础镜像不同，使用同一 Dockerfile 时按角色传入对应镜像。P 基础镜像标签尾部为 `dtk2604-py3.10-20260920-0101`，D 为 `dtk26041-py3.10-20261019-0103`。两个角色使用同一基础镜像仍需单独验证。
-
-```bash
-docker build --build-arg BASE_IMAGE="$P_BASE_IMAGE" -t minimax-m3-dcu:prefill-20261112 .
-docker build --build-arg BASE_IMAGE="$D_BASE_IMAGE" --build-arg BUILD_NATIVE=0 \
-  -t minimax-m3-dcu:decode-20261112 .
-```
-
-需要镜像文件时可用 `docker save -o minimax-m3-dcu.tar minimax-m3-dcu:prefill-20261112 minimax-m3-dcu:decode-20261112`，目标机器用 `docker load -i minimax-m3-dcu.tar` 导入。
-
-2026-11-12 打包时，两套镜像均通过无 DCU 设备挂载的启动入口、Torch 和 SGLang 导入检查，P 原生扩展编译和导入通过。镜像保留归档运行时的原始文件，Git 中两处 Mistral 类引用仅调整了换行，Python 语法树一致。
-
 ## 启动
 
-P、D 分别在对应宿主机启动，启用 host 网络和 host IPC，挂载站点需要的 DCU/RDMA 设备、驱动和只读模型目录。下面命令假定站点设备名与示例一致，RDMA 设备列表及管理网卡从环境变量传入。
+P、D 分别在对应宿主机启动，启用 host 网络和 host IPC，挂载站点需要的 DCU/RDMA 设备、驱动和只读模型目录。将 `P_IMAGE` 和 `D_IMAGE` 设为相应宿主机可用的构建产物。共用上面构建的镜像时，两者均填 `minimax-m3-dcu:custom`。下面命令假定设备名与示例一致，RDMA 设备列表及管理网卡从环境变量传入。
 
 ```bash
 # P 节点
@@ -33,7 +50,7 @@ docker run --rm --network host --ipc host --group-add video \
   --device=/dev/kfd --device=/dev/mkfd --device=/dev/dri --device=/dev/infiniband \
   -v /opt/hyhal:/opt/hyhal:ro -v /model:/model:ro \
   -e NETWORK_IFACE -e IB_DEVICES \
-  -e MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 minimax-m3-dcu:prefill-20261112 prefill
+  -e MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 "$P_IMAGE" prefill
 
 # D 节点，挂载与主模型匹配的 EAGLE3 draft
 docker run --rm --network host --ipc host --group-add video \
@@ -41,13 +58,19 @@ docker run --rm --network host --ipc host --group-add video \
   -v /opt/hyhal:/opt/hyhal:ro -v /model:/model:ro \
   -e NETWORK_IFACE -e IB_DEVICES \
   -e MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 \
-  -e DRAFT_PATH=/model/MiniMax-M3-EAGLE3 minimax-m3-dcu:decode-20261112 decode
+  -e DRAFT_PATH=/model/MiniMax-M3-EAGLE3 "$D_IMAGE" decode
 
 # Router，URL 指向实际 P 和 D 节点
-docker run --rm --network host -e PREFILL_URL -e DECODE_URL minimax-m3-dcu:prefill-20261112 router
+docker run --rm --network host -e PREFILL_URL -e DECODE_URL "$P_IMAGE" router
 ```
 
 默认端口 P 40000、D 40001、Router 40010，P bootstrap 8998。以两端 `/health`、Router `/workers` 和通过 Router 的长提示词请求确认部署。E16 JSON 是命中验证用的试验表，可用 `DEEPGEMM_CONFIG` 指定其他已验证规则。
+
+## 已归档的镜像示例
+
+2026-11-12 的交付归档包含 `minimax-m3-dcu:prefill-20261112` 和 `minimax-m3-dcu:decode-20261112`。当时 P、D 各自沿用原测试基础镜像，标签尾部分别为 `dtk2604-py3.10-20260920-0101` 和 `dtk26041-py3.10-20261019-0103`。两套产物通过无 DCU 设备挂载的入口、Torch 和 SGLang 导入检查，P 原生扩展编译和导入通过。
+
+自建镜像可用 `docker save -o minimax-m3-dcu.tar "$IMAGE"` 导出，到目标机器用 `docker load -i minimax-m3-dcu.tar` 导入。
 
 ## 性能记录
 
