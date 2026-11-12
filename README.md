@@ -40,29 +40,42 @@ P 端应解析到 `/opt/minimax-m3-dcu/sglang-das/python/sglang/__init__.py`，D
 
 `experiments/prefill-cp/` 保留 CP、QK 及 raw scatter 的阶段补丁，`experiments/oai-triton/` 保留按当前 Triton 量化契约适配的融合候选。候选文件对应各自实验基线，默认镜像使用已测 QK、CP-v2 和 FP8 packet。
 
-## 启动
+## 启动容器和服务
 
-P、D 分别在对应宿主机启动，启用 host 网络和 host IPC，挂载站点需要的 DCU/RDMA 设备、驱动和只读模型目录。将 `P_IMAGE` 和 `D_IMAGE` 设为相应宿主机可用的构建产物。共用上面构建的镜像时，两者均填 `minimax-m3-dcu:custom`。下面命令假定设备名与示例一致，RDMA 设备列表及管理网卡从环境变量传入。
+在 P、D 各自的宿主机上，从仓库根目录执行 `docker.sh`。脚本沿用服务器 `launch_docker.sh` 的 host 网络、host IPC、DCU 设备和 `/opt/hyhal`、`/data/xsf`、`/model` 挂载，并把当前仓库只读挂载到容器内 `/workspace/minimax-m3-dcu`。脚本沿用服务器的特权容器配置，请在具备相应权限的节点运行。
 
 ```bash
-# P 节点
-docker run --rm --network host --ipc host --group-add video \
-  --device=/dev/kfd --device=/dev/mkfd --device=/dev/dri --device=/dev/infiniband \
-  -v /opt/hyhal:/opt/hyhal:ro -v /model:/model:ro \
-  -e NETWORK_IFACE -e IB_DEVICES \
-  -e MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 "$P_IMAGE" prefill
+# P 宿主机
+DOCKER_IMAGE=minimax-m3-dcu:custom CONTAINER_NAME=minimax-m3-p bash docker.sh
 
-# D 节点，挂载与主模型匹配的 EAGLE3 draft
-docker run --rm --network host --ipc host --group-add video \
-  --device=/dev/kfd --device=/dev/mkfd --device=/dev/dri --device=/dev/infiniband \
-  -v /opt/hyhal:/opt/hyhal:ro -v /model:/model:ro \
-  -e NETWORK_IFACE -e IB_DEVICES \
-  -e MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 \
-  -e DRAFT_PATH=/model/MiniMax-M3-EAGLE3 "$D_IMAGE" decode
-
-# Router，URL 指向实际 P 和 D 节点
-docker run --rm --network host -e PREFILL_URL -e DECODE_URL "$P_IMAGE" router
+# D 宿主机
+DOCKER_IMAGE=minimax-m3-dcu:custom CONTAINER_NAME=minimax-m3-d bash docker.sh
 ```
+
+如果 P、D 分别构建，给 `DOCKER_IMAGE` 填各自的标签。默认命令会进入容器 shell，`-v` 启动容器后只打印进入命令。可以在创建容器时用 `DOCKER_ENV_FILE` 指定 Docker 环境变量文件，或者进入容器后再设置网卡、RDMA 设备和模型路径。
+
+```bash
+# P 容器内
+cd /workspace/minimax-m3-dcu
+export NETWORK_IFACE='<本机网卡>'
+export IB_DEVICES='<逗号分隔的本机 RDMA 设备>'
+export MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8
+bash P.sh
+
+# D 容器内
+cd /workspace/minimax-m3-dcu
+export NETWORK_IFACE='<本机网卡>'
+export IB_DEVICES='<逗号分隔的本机 RDMA 设备>'
+export MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8
+export DRAFT_PATH=/model/MiniMax-M3-EAGLE3
+bash D.sh
+
+# 等 P、D 健康后，在 P 容器的另一个 shell 中执行
+cd /workspace/minimax-m3-dcu
+PREFILL_URL="http://<P_IP>:40000" DECODE_URL="http://<D_IP>:40001" bash router.sh
+```
+
+`P.sh` 和 `D.sh` 使用镜像内 `/opt/minimax-m3-dcu` 的运行时及扩展。调整启动参数可直接编辑宿主机仓库中的角色脚本，修改 SGLang 源码或扩展后重新构建镜像。也可以直接使用镜像入口参数 `prefill`、`decode` 和 `router`。
 
 默认端口 P 40000、D 40001、Router 40010，P bootstrap 8998。以两端 `/health`、Router `/workers` 和通过 Router 的长提示词请求确认部署。E16 JSON 是命中验证用的试验表，可用 `DEEPGEMM_CONFIG` 指定其他已验证规则。
 

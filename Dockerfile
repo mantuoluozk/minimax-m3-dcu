@@ -7,6 +7,7 @@ ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH}:/opt/dtk/.hyhal/rocm_smi/lib
 COPY sglang-das/python/ sglang-das/python/
 COPY native/ native/
 COPY build_native.py LICENSE LICENSE-lightop ./
+COPY P.sh D.sh router.sh ./
 COPY deploy/ deploy/
 RUN test ! -e /dev/kfd && test ! -e /dev/mkfd && \
     python3 deploy/prepare_decode.py && \

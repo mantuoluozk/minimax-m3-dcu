@@ -1,5 +1,8 @@
 **
 !Dockerfile
+!P.sh
+!D.sh
+!router.sh
 !sglang-das/
 !sglang-das/python/
 !sglang-das/python/**

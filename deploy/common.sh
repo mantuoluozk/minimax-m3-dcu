@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="${MINIMAX_M3_HOME:-/opt/minimax-m3-dcu}"
 : "${MODEL_PATH:?Set MODEL_PATH inside the container}"
 : "${NETWORK_IFACE:?Set NETWORK_IFACE to the host interface}"
 : "${IB_DEVICES:?Set IB_DEVICES to a comma-separated RDMA device list}"
