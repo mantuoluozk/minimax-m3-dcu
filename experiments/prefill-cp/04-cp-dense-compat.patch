@@ -1,0 +1,70 @@
+--- qk-hip/sglang/srt/layers/attention/minimax_sparse_backend.py
++++ cp-dense-compat/sglang/srt/layers/attention/minimax_sparse_backend.py
+@@ -2798,6 +2798,40 @@
+             spec_info, cuda_graph_bs
+         )
+ 
++    def _forward_cp_triton_dense(self, q, k, v, layer, forward_batch,
++                                 save_kv_cache=True, **kwargs):
++        # Triton dense metadata remains in global token order under CP-v2.
++        strategy = get_cp_strategy()
++        if strategy is None or k is None or v is None:
++            raise RuntimeError("CP dense compatibility requires strategy and new K/V")
++        lengths = forward_batch.extend_seq_lens_cpu
++        if lengths is None:
++            raise RuntimeError("CP dense compatibility requires CPU extend lengths")
++        expected = int(sum(lengths))
++        q_full = strategy.gather_hidden_states(q, forward_batch)
++        k_full = strategy.gather_kv_cache(k, forward_batch)
++        v_full = strategy.gather_kv_cache(v, forward_batch)
++        if any(x.shape[0] != expected for x in (q_full, k_full, v_full)):
++            raise RuntimeError("CP dense global rows disagree with Triton query metadata")
++        had_scratch = hasattr(forward_batch, "_attn_output")
++        scratch = getattr(forward_batch, "_attn_output", None)
++        forward_batch._attn_output = None
++        try:
++            full = self.dense.forward(q_full, k_full, v_full, layer,
++                                      forward_batch, save_kv_cache, **kwargs)
++        finally:
++            if had_scratch:
++                forward_batch._attn_output = scratch
++            else:
++                delattr(forward_batch, "_attn_output")
++        local = strategy.shard_hidden_states(full, forward_batch)
++        if local.shape[0] != q.shape[0]:
++            raise RuntimeError("CP dense output physical shard row mismatch")
++        if not getattr(self, "_cp_dense_compat_logged", False):
++            logger.info("CP Triton dense compatibility selected: local_rows=%s global_rows=%s", q.shape[0], expected)
++            self._cp_dense_compat_logged = True
++        return local
++
+     def forward(
+         self,
+         q,
+@@ -2812,6 +2846,11 @@
+             return self.sparse.forward(
+                 q, k, v, layer, forward_batch, save_kv_cache, **kwargs
+             )
++
++        if (is_cp_v2_active(forward_batch)
++                and self.dense.__class__.__name__ == "TritonAttnBackend"):
++            return self._forward_cp_triton_dense(
++                q, k, v, layer, forward_batch, save_kv_cache, **kwargs)
+ 
+         # DP attention pads q to an even length but flashinfer builds qo_indptr from
+         # extend_seq_lens, so padded q.shape[0] != qo_indptr[-1] and paged-prefill
+@@ -2852,8 +2891,12 @@
+             return self.sparse.forward_extend(
+                 q, k, v, layer, forward_batch, save_kv_cache, **kwargs
+             )
+-        else:
+-            return self.dense.forward_extend(
++        if (is_cp_v2_active(forward_batch)
++                and self.dense.__class__.__name__ == "TritonAttnBackend"):
++            return self._forward_cp_triton_dense(
++                q, k, v, layer, forward_batch, save_kv_cache, **kwargs)
++
++        return self.dense.forward_extend(
+                 q, k, v, layer, forward_batch, save_kv_cache, **kwargs
+             )
+ 

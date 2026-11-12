@@ -1,0 +1,222 @@
+--- cp-dense-fp8/sglang/srt/layers/cp/zigzag.py
++++ cp-raw-scatter/sglang/srt/layers/cp/zigzag.py
+@@ -369,6 +369,17 @@
+         self, x: Any, forward_batch, stream: Optional[Any] = None
+     ) -> Any:
+         return self._all_gather_reorganized(x, forward_batch, reuse_output=False)
++
++    def gather_kv_cache_raw_reusable(self, x, forward_batch):
++        """Return rank-major payload and logical-row map for a fused consumer.
++
++        Consume both on the current stream before the next reusable gather.
++        The normal gather API continues returning a reordered tensor.
++        """
++        return self._all_gather_reorganized(
++            x, forward_batch, reuse_output=True, return_reorder_map=True
++        )
++
+ 
+     def gather_kv_cache_reusable(
+         self, x: Any, forward_batch, stream: Optional[Any] = None
+@@ -492,13 +503,17 @@
+         forward_batch,
+         *,
+         reuse_output: bool,
++        return_reorder_map: bool = False,
+     ):
+         meta = forward_batch.attn_cp_metadata
+         per_rank_token = meta.per_rank_logical_token or meta.per_rank_actual_token
+         per_rank_token = [int(v) for v in per_rank_token]
+         max_len = max(per_rank_token, default=0)
+         if max_len == 0:
+-            return x.new_empty((0, *x.shape[1:]))
++            empty = x.new_empty((0, *x.shape[1:]))
++            if return_reorder_map:
++                return empty, torch.empty(0, dtype=torch.long, device=x.device)
++            return empty
+ 
+         if per_rank_token == meta.per_rank_actual_token:
+             local_len = int(x.shape[0])
+@@ -541,8 +556,10 @@
+                 padded = x.new_empty((max_len, *x.shape[1:]))
+                 gathered = x.new_empty((required_gathered_rows, *x.shape[1:]))
+         old_cached_output = cached_output
+-        if reuse_output and (
+-            cached_output is None or cached_output.shape[0] < required_output_rows
++        if (
++            reuse_output
++            and not return_reorder_map
++            and (cached_output is None or cached_output.shape[0] < required_output_rows)
+         ):
+             cached_output = x.new_empty((required_output_rows, *x.shape[1:]))
+         if (
+@@ -559,9 +576,13 @@
+         padded = padded[:max_len]
+         gathered = gathered[:required_gathered_rows]
+         output = (
+-            cached_output[:required_output_rows]
+-            if reuse_output
+-            else x.new_empty((required_output_rows, *x.shape[1:]))
++            None
++            if return_reorder_map
++            else (
++                cached_output[:required_output_rows]
++                if reuse_output
++                else x.new_empty((required_output_rows, *x.shape[1:]))
++            )
+         )
+ 
+         # Equal-length shards are already collective-compatible. Skip the local
+@@ -616,5 +637,7 @@
+ 
+         group = get_parallel().attn_cp_group
+         group.all_gather_into_tensor(gathered, gather_input)
++        if return_reorder_map:
++            return gathered, gather_indices
+         torch.index_select(gathered, 0, gather_indices, out=output)
+         return output
+--- cp-dense-fp8/sglang/srt/layers/attention/minimax_sparse_backend.py
++++ cp-raw-scatter/sglang/srt/layers/attention/minimax_sparse_backend.py
+@@ -1813,6 +1813,100 @@
+         self._flash_mla_prefill_index_meta[cache_key] = meta
+         return meta
+ 
++    def _try_store_query_sharded_cp_fp8_kv(
++        self, forward_batch, k, v, idx_k, idx_v, layer
++    ):
++        """Opt-in mixed-byte reorder/store fusion; preserve all other pool paths."""
++        if (
++            not _is_hcu
++            or os.environ.get("SGLANG_M31_CP_RAW_SCATTER", "0") != "1"
++            or os.environ.get("SGLANG_MINIMAX_CP_FP8_KV_EXCHANGE", "0") != "1"
++        ):
++            return False
++        strategy = get_cp_strategy()
++        pool = self.kv_pool
++        main = getattr(pool, "main_pool", None)
++        index = getattr(pool, "index_k_pool", None)
++        loc = forward_batch.out_cache_loc
++        scales = (layer.k_scale_float, layer.v_scale_float)
++        if (
++            strategy is None
++            or strategy.name != "zigzag"
++            or not hasattr(strategy, "gather_kv_cache_raw_reusable")
++            or main is None
++            or index is None
++            or idx_k is None
++            or idx_v is not None
++            or main.dtype != torch.float8_e4m3fn
++            or index.dtype != torch.bfloat16
++            or getattr(pool, "_enable_hisparse", False)
++            or any(x.dtype != torch.bfloat16 for x in (k, v, idx_k))
++            or tuple(k.shape[1:]) != (4, 128)
++            or tuple(v.shape[1:]) != (4, 128)
++            or tuple(idx_k.shape[1:]) != (1, 128)
++            or not isinstance(loc, torch.Tensor)
++            or loc.dtype != torch.int64
++            or loc.dim() != 1
++            or not loc.is_contiguous()
++            or not all(x.is_cuda and x.device == k.device for x in (k, v, idx_k, loc))
++            or not all(x.shape[0] == k.shape[0] for x in (v, idx_k))
++            or not all(
++                x.stride(2) == 1
++                and x.stride(1) == 128
++                and x.stride(0) >= x.shape[1] * 128
++                and x.stride(0) % 8 == 0
++                and x.data_ptr() % 16 == 0
++                for x in (k, v, idx_k)
++            )
++            or not all(
++                a is None or (type(a) in (int, float) and 1e-37 < a < 1e37)
++                for a in scales
++            )
++        ):
++            return False
++        meta = forward_batch.attn_cp_metadata
++        per_rank = meta.per_rank_logical_token or meta.per_rank_actual_token
++        if loc.numel() != sum(int(n) for n in per_rank):
++            return False
++        kc, vc = pool.get_kv_buffer(layer.layer_id)
++        ikc = pool.get_index_k_buffer(layer.layer_id)
++        if not (
++            tuple(kc.shape[1:]) == tuple(vc.shape[1:]) == (4, 128)
++            and tuple(ikc.shape[1:]) == (1, 128)
++        ):
++            return False
++        if not (
++            kc.dtype == vc.dtype == torch.float8_e4m3fn and ikc.dtype == torch.bfloat16
++        ):
++            return False
++        if not all(x.stride(2) == 1 and x.stride(1) == 128 for x in (kc, vc, ikc)):
++            return False
++        caches = [x.view(x.shape[0], -1).view(torch.uint8) for x in (kc, vc, ikc)]
++        if not all(
++            x.device == k.device
++            and x.stride(1) == 1
++            and x.stride(0) % 16 == 0
++            and x.data_ptr() % 16 == 0
++            and x.shape[0] == kc.shape[0]
++            for x in caches
++        ):
++            return False
++        from m31_minimax_ops import minimax_cp_cache_scatter
++        from m31_cp_pack import pack_current as minimax_cp_fp8_pack
++
++        packed = minimax_cp_fp8_pack(
++            k.flatten(1), v.flatten(1), idx_k.flatten(1), *scales
++        )
++        raw, reorder = strategy.gather_kv_cache_raw_reusable(packed, forward_batch)
++        minimax_cp_cache_scatter(raw, reorder, loc, *caches)
++        if not getattr(self, "_cp_fp8_raw_cache_logged", False):
++            logger.info(
++                "MiniMax CP fused raw reorder/cache store selected: FP8 KV + BF16 index K, 1280 bytes/token"
++            )
++            self._cp_fp8_raw_cache_logged = True
++        return True
++
++
+     def _materialize_query_sharded_cp_kv(
+         self,
+         forward_batch: ForwardBatch,
+@@ -2023,6 +2117,7 @@
+         if idx_q is None or idx_k is None:
+             raise RuntimeError("MiniMax sparse prefill requires index Q and K")
+         cp_active = is_cp_v2_active(forward_batch)
++        cp_cache_written = False
+         if cp_active:
+             if not self.enable_query_sharded_cp:
+                 raise RuntimeError(
+@@ -2034,9 +2129,12 @@
+                 raise RuntimeError(
+                     "MiniMax query-sharded CP is currently implemented only for CUDA/HIP"
+                 )
+-            k, v, idx_k, idx_v = self._materialize_query_sharded_cp_kv(
+-                forward_batch, k, v, idx_k, idx_v, layer=layer
+-            )
++            cp_cache_written = self._try_store_query_sharded_cp_fp8_kv(
++                forward_batch, k, v, idx_k, idx_v, layer)
++            if not cp_cache_written:
++                k, v, idx_k, idx_v = self._materialize_query_sharded_cp_kv(
++                    forward_batch, k, v, idx_k, idx_v, layer=layer
++                )
+             global _minimax_sparse_cp_logged
+             if not _minimax_sparse_cp_logged:
+                 logger.info(
+@@ -2044,7 +2142,7 @@
+                     "cp_size=%s, local_q=%s, materialized_kv=%s",
+                     get_cp_strategy().cp_size,
+                     q.shape[0],
+-                    k.shape[0],
++                    forward_batch.out_cache_loc.numel() if cp_cache_written else k.shape[0],
+                 )
+                 _minimax_sparse_cp_logged = True
+         kv_cached_by_fusion = self._is_sparse_kv_cached_by_fusion(
+@@ -2055,7 +2153,7 @@
+         # the complete new-chunk sparse KV, so overwrite that partial write
+         # with the globally materialized tensors.
+         store_loc = forward_batch.out_cache_loc
+-        if cp_active or not kv_cached_by_fusion:
++        if (cp_active or not kv_cached_by_fusion) and not cp_cache_written:
+             if idx_k is None:
+                 self.kv_pool.set_kv_buffer(
+                     layer,
