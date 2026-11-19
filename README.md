@@ -11,34 +11,26 @@
 - 超节点基础镜像示例，按现场 DTK 和依赖版本选用
   `42.228.13.241:5000/jenkins/model_test_env/sglang:0.5.18-ubuntu22.04-dtk26041-py3.10-scalex40-sf_b020-20260923-1040`
 
-在已有 SGLang 容器里执行以下命令。这里以 `/public/minimax-m3` 为部署目录，可换成任意容器内可写目录。源码放在 `sglang-source/`，部署脚本和 JSON 放在它的上一级。
+进入按海光常规方式启动的 SGLang 容器，在自己的部署目录执行以下命令。源码放在 `sglang-source/`，部署脚本和 JSON 放在它的上一级。
 
 ~~~bash
-mkdir -p /public/minimax-m3
-cd /public/minimax-m3
 git clone --depth 1 https://github.com/mantuoluozk/minimax-m3-dcu.git sglang-source
 cd sglang-source
-
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${ROCM_HOME:-/opt/dtk}/.hyhal/rocm_smi/lib"
 ~~~
 
-在 P 容器中编译 HIP 扩展并检查导入。
+在 P 容器中编译 HIP 扩展。
 
 ~~~bash
 python3 sglang-das/hcu_m3/build_native.py
-PYTHONPATH="$PWD/sglang-das/python:$PWD/build" python3 -c \
-  'import torch, sglang, m31_minimax_ops; print("P:", sglang.__file__, m31_minimax_ops.__file__)'
 ~~~
 
-在 D 容器中准备源码并检查导入。
+在 D 容器中准备源码。
 
 ~~~bash
 python3 sglang-das/hcu_m3/prepare_decode.py
-PYTHONPATH="$PWD/runtime/decode" python3 -c \
-  'import sglang; print("D:", sglang.__file__)'
 ~~~
 
-按角色运行对应的导入检查。角色脚本用 `PYTHONPATH` 优先加载本仓库的 SGLang Python 源码。D 的 `prepare_decode.py` 只生成应用了 D 端适配的源码目录。P 的 QK HIP 路径需要编译 `m31_minimax_ops.so`，完成时会打印 `M31_CANDIDATE_NATIVE_BUILD_PASS`。
+D 的命令生成 `runtime/decode/`。P 的命令生成 QK HIP 路径需要的 `m31_minimax_ops.so`，完成时会打印 `M31_CANDIDATE_NATIVE_BUILD_PASS`。部署脚本负责加载对应的 SGLang 源码。
 
 ## 优化内容
 

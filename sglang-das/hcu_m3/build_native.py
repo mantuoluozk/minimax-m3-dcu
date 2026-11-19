@@ -2,7 +2,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-os.environ.setdefault('ROCM_HOME','/opt/dtk')
 os.environ.setdefault('PYTORCH_ROCM_ARCH','gfx938')
 os.environ.setdefault('MAX_JOBS','2')
 from torch.utils.cpp_extension import load
