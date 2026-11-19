@@ -19,14 +19,13 @@ cd /public/minimax-m3
 git clone --depth 1 https://github.com/mantuoluozk/minimax-m3-dcu.git sglang-source
 cd sglang-source
 
-export ROCM_HOME=/opt/dtk
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$ROCM_HOME/.hyhal/rocm_smi/lib"
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${ROCM_HOME:-/opt/dtk}/.hyhal/rocm_smi/lib"
 ~~~
 
 在 P 容器中编译 HIP 扩展并检查导入。
 
 ~~~bash
-PYTORCH_ROCM_ARCH=gfx938 MAX_JOBS=2 python3 sglang-das/hcu_m3/build_native.py
+python3 sglang-das/hcu_m3/build_native.py
 PYTHONPATH="$PWD/sglang-das/python:$PWD/build" python3 -c \
   'import torch, sglang, m31_minimax_ops; print("P:", sglang.__file__, m31_minimax_ops.__file__)'
 ~~~
@@ -44,5 +43,5 @@ PYTHONPATH="$PWD/runtime/decode" python3 -c \
 ## 优化内容
 
 - **P 端**采用 QK Norm/RoPE HIP、CP-v2 普通层兼容和 FP8 KV packet，包含 E16 DeepGEMM 适配记录。
-- **D 端**保留 HCU 通信预热和 EAGLE3，现场验证配置采用 Decode Graph full 和 Triton FP8 主 Attention，关闭此前触发 VMFault 的 multi-Q verify 打分。
+- **D 端**开启 Decode Graph full 和 Triton FP8 主 Attention，使用 HCU 通信预热和 EAGLE3，关闭此前触发 VMFault 的 multi-Q verify 打分。
 - 基础环境、完整 P/D 和 Router 脚本、curl 示例、DeepEP/DeepGEMM JSON 和实测对照见 [P/D 优化与部署文档](docs/optimization.md)。
