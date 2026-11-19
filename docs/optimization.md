@@ -16,7 +16,7 @@
 
 实验基线已经使用用户验证过的 P/D Triton Attention、FP8 KV、Mooncake、DeepEP/DeepGEMM 和 EAGLE3。11 月初先恢复这一配方，统一两端运行时，在 D 补 HCU 通信预热，P 的 prefill chunk 和 token 上限收至 32768，最多同批预填充四个请求。基础镜像的原装 SGLang 未作为端到端 A/B 控制组。可复现的控制组为迁移前源码快照加现场脚本，详细来源见 [源码清单](../sglang-das/hcu_m3/source-manifest.json)。
 
-部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端先按 [README](../README.md) 在基础容器内准备各自运行时。容器沿用现场的 launch.sh，使用 host 网络并挂载宿主机驱动目录、DCU/RDMA 设备和主模型。D 另挂载 EAGLE3 draft。以 /public/minimax-m3 为例，将本页的脚本和 JSON 保存到该目录，源码克隆到同目录的 sglang-source/。源码另放时，修改脚本顶部的 PROJECT_ROOT。P 从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
+部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端用同一基础镜像，按 [README](../README.md) 同时准备 P 和 D 的运行时。交换角色时，按目标节点调整脚本中的网卡和 Router 地址，并在运行 D 的节点挂载 EAGLE3 draft。容器沿用现场的 launch.sh，使用 host 网络并挂载宿主机驱动目录、DCU/RDMA 设备和主模型。D 另挂载 EAGLE3 draft。以 /public/minimax-m3 为例，将本页的脚本和 JSON 保存到该目录，源码克隆到同目录的 sglang-source/。源码另放时，修改脚本顶部的 PROJECT_ROOT。P 从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
 
 ## 2. 优化项和实测结果
 

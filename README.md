@@ -11,26 +11,16 @@
 - 超节点基础镜像示例，按现场 DTK 和依赖版本选用
   `42.228.13.241:5000/jenkins/model_test_env/sglang:0.5.18-ubuntu22.04-dtk26041-py3.10-scalex40-20261016-0200`
 
-使用已有的 `launch.sh` 进入 SGLang 容器，在自己的部署目录执行以下命令。源码放在 `sglang-source/`，部署脚本和 JSON 放在它的上一级。
+两台机器使用同一基础镜像。用已有的 `launch.sh` 进入容器，在部署目录执行下面这一组命令，每个环境同时准备 P 和 D。源码放在 `sglang-source/`，部署脚本和 JSON 放在它的上一级。
 
 ~~~bash
 git clone --depth 1 https://github.com/mantuoluozk/minimax-m3-dcu.git sglang-source
 cd sglang-source
-~~~
-
-在 P 容器中编译 HIP 扩展。
-
-~~~bash
 python3 sglang-das/hcu_m3/build_native.py
-~~~
-
-在 D 容器中准备源码。
-
-~~~bash
 python3 sglang-das/hcu_m3/prepare_decode.py
 ~~~
 
-D 的命令生成 `runtime/decode/`。P 的命令生成 QK HIP 路径需要的 `m31_minimax_ops.so`，完成时会打印 `M31_CANDIDATE_NATIVE_BUILD_PASS`。部署脚本负责加载对应的 SGLang 源码。
+编译完成会打印 `M31_CANDIDATE_NATIVE_BUILD_PASS`。P 使用生成的 `m31_minimax_ops.so`，D 使用生成的 `runtime/decode/`。如果两个容器看到同一份共享源码目录，在该目录执行一次即可。切换 P/D 时直接使用对应脚本。
 
 ## 优化内容
 
