@@ -18,7 +18,7 @@
 
 早期交付提交 212939e 的 D 脚本默认关闭 Decode Graph 和 Triton FP8 主 Attention，并开启 multi-Q verify。本版脚本按 12/37 实测结果调整了这三项，以及 P 配置文件的相对路径和日志落盘。镜像中的 SGLang 源码和 D overlay 沿用已测快照。 [原交付提交](https://github.com/mantuoluozk/minimax-m3-dcu/tree/212939e6ccf56719b73565d910378f79338f8278)
 
-部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端先按 [README](../README.md) 在基础容器内编译。容器使用 host 网络，挂载 DCU/RDMA 设备和主模型，D 另挂载 EAGLE3 draft。示例默认 SGLang 源码位于 /opt/minimax-m3-dcu。把本页的脚本和 JSON 保存到你自己的部署目录，P 脚本默认从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
+部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端先按 [README](../README.md) 在基础容器内准备各自运行时。容器使用 host 网络，挂载 DCU/RDMA 设备和主模型，D 另挂载 EAGLE3 draft。以 /public/minimax-m3 为例，将本页的脚本和 JSON 保存到该目录，源码克隆到同目录的 sglang-source/。源码另放时，启动 P/D 前设置 MINIMAX_M3_HOME 为容器内源码目录。P 从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
 
 ## 2. P.sh
 
@@ -29,7 +29,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${MINIMAX_M3_HOME:-/opt/minimax-m3-dcu}"
+PROJECT_ROOT="${MINIMAX_M3_HOME:-$SCRIPT_DIR/sglang-source}"
 export ROCM_HOME="${ROCM_HOME:-/opt/dtk}"
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$ROCM_HOME/.hyhal/rocm_smi/lib"
 : "${MODEL_PATH:?Set MODEL_PATH inside the container}"
@@ -152,7 +152,7 @@ MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 bash P.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${MINIMAX_M3_HOME:-/opt/minimax-m3-dcu}"
+PROJECT_ROOT="${MINIMAX_M3_HOME:-$SCRIPT_DIR/sglang-source}"
 export ROCM_HOME="${ROCM_HOME:-/opt/dtk}"
 export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$ROCM_HOME/.hyhal/rocm_smi/lib"
 : "${MODEL_PATH:?Set MODEL_PATH inside the container}"
