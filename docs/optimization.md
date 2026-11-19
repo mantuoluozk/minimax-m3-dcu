@@ -68,38 +68,32 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${MINIMAX_M3_HOME:-$SCRIPT_DIR/sglang-source}"
-export ROCM_HOME="${ROCM_HOME:-/opt/dtk}"
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$ROCM_HOME/.hyhal/rocm_smi/lib"
-: "${MODEL_PATH:?Set MODEL_PATH inside the container}"
-: "${NETWORK_IFACE:?Set NETWORK_IFACE to the host interface}"
-: "${IB_DEVICES:?Set IB_DEVICES to a comma-separated RDMA device list}"
-LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
-export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-$NETWORK_IFACE}"
-export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-$NETWORK_IFACE}"
-SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-MiniMax-M3}"
+MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8
+NETWORK_IFACE=p14p2
+IB_DEVICES=mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_7,mlx5_8,mlx5_9,mlx5_10
+SERVER_PORT=40000
+BOOTSTRAP_PORT=8998
+DEEPEP_CONFIG="$SCRIPT_DIR/deepep-prefill.json"
+DEEPGEMM_CONFIG="$SCRIPT_DIR/deepgemm-e16.json"
 
-SERVER_PORT=${SERVER_PORT:-40000}
-BOOTSTRAP_PORT="${BOOTSTRAP_PORT:-8998}"
-DEEPEP_CONFIG="${DEEPEP_CONFIG:-$SCRIPT_DIR/deepep-prefill.json}"
-for config in "$DEEPEP_CONFIG" "${DEEPGEMM_CONFIG:-$SCRIPT_DIR/deepgemm-e16.json}"; do
-    if [[ ! -r "$config" ]]; then
-        printf 'Cannot read Prefill config: %s\n' "$config" >&2
-        exit 1
-    fi
-done
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${ROCM_HOME:-/opt/dtk}/.hyhal/rocm_smi/lib"
 export PYTHONPATH="$PROJECT_ROOT/sglang-das/python:$PROJECT_ROOT/build"
+
+export NCCL_SOCKET_IFNAME="$NETWORK_IFACE"
+export GLOO_SOCKET_IFNAME="$NETWORK_IFACE"
+
 export SGLANG_ENABLE_CP_V2=1
 export SGLANG_MINIMAX_CP_FP8_KV_EXCHANGE=1
 export SGLANG_HEALTH_CHECK_TIMEOUT=120
 export SGLANG_USE_LIGHTOP_MINIMAX_QK_ROPE=1
 
-export NCCL_IB_HCA="${NCCL_IB_HCA:-${IB_DEVICES//,/:1,}:1}"
+export NCCL_IB_HCA="${IB_DEVICES//,/:1,}:1"
 export ROCSHMEM_ALLOWED_IBV_DEVICES="$IB_DEVICES"
 export MC_ENABLE_DEST_DEVICE_AFFINITY=1
 export MC_TE_FILTERS="$IB_DEVICES"
 export MC_ALLOWED_IBV_DEVICES="$IB_DEVICES"
 
-export SGLANG_HCU_DEEPGEMM_CONTIG_TUNING_CONFIG="${DEEPGEMM_CONFIG:-$SCRIPT_DIR/deepgemm-e16.json}"
+export SGLANG_HCU_DEEPGEMM_CONTIG_TUNING_CONFIG="$DEEPGEMM_CONFIG"
 
 unset SGLANG_OPT_DG_HCU_FUSED_QUANT_SCATTER SGLANG_USE_FUSED_TOPK_SOFTMAX
 export SGLANG_USE_LIGHTOP=1
@@ -107,9 +101,6 @@ export SGLANG_USE_LIGHTOP_CHANNEL_FP8=1
 export SGLANG_USE_LIGHTOP_GEMMA_RMSNORM=1
 export SGLANG_KV_LAYOUT_HCU_FA=false
 export SGLANG_REQUIRE_KV_CACHE_SCALES=1
-export SGLANG_OPT_USE_MINIMAX_FLASH_MLA_GFX938=0
-export SGLANG_OPT_USE_BF16_ROUTER_GEMM=1
-export SGLANG_ENABLE_M3_TRITON_FP8_ATTN_GEMM=0
 export SGLANG_OPT_USE_MINIMAX_QUERY_SHARDED_CP=1
 export SGLANG_PREFILL_CP_MIN_TOKENS_PER_SEQUENCE=4096
 export SGLANG_MINIMAX_PARALLEL_CP_SEGMENTS=1
@@ -124,6 +115,7 @@ export NCCL_MAX_NCHANNELS=48
 export SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT=600
 export SGLANG_DISAGGREGATION_WAITING_TIMEOUT=600
 
+LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/prefill-$(date +%Y%m%d-%H%M%S)-$$.log"
 printf "Log file: %s\n" "$LOG_FILE"
@@ -133,7 +125,7 @@ python3 -u -m sglang.launch_server \
   --enable-dp-attention --disable-overlap-schedule \
   --moe-dense-tp-size 1 --prefill-max-requests 4 \
   --model-path "$MODEL_PATH" \
-  --served-model-name "$SERVED_MODEL_NAME" \
+  --served-model-name MiniMax-M3 \
   --trust-remote-code \
   --dtype bfloat16 \
   --quantization compressed-tensors \
@@ -174,12 +166,7 @@ python3 -u -m sglang.launch_server \
   --disable-custom-all-reduce 2>&1 | tee "$LOG_FILE"
 ~~~
 
-启动示例中的设备名和地址按现场替换。
-
-~~~bash
-NETWORK_IFACE='p14p2' IB_DEVICES='mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_7,mlx5_8,mlx5_9,mlx5_10' \
-MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 bash P.sh
-~~~
+改好脚本顶部的模型路径和网卡后执行 `bash P.sh`。
 
 ## 4. D.sh
 
@@ -191,24 +178,23 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="${MINIMAX_M3_HOME:-$SCRIPT_DIR/sglang-source}"
-export ROCM_HOME="${ROCM_HOME:-/opt/dtk}"
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$ROCM_HOME/.hyhal/rocm_smi/lib"
-: "${MODEL_PATH:?Set MODEL_PATH inside the container}"
-: "${NETWORK_IFACE:?Set NETWORK_IFACE to the host interface}"
-: "${IB_DEVICES:?Set IB_DEVICES to a comma-separated RDMA device list}"
-LOG_DIR="${LOG_DIR:-$SCRIPT_DIR/logs}"
-export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-$NETWORK_IFACE}"
-export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-$NETWORK_IFACE}"
-SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-MiniMax-M3}"
-: "${DRAFT_PATH:?Set DRAFT_PATH inside the container}"
+MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8
+NETWORK_IFACE=p14p1
+IB_DEVICES=mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7
+SERVER_PORT=40001
+DRAFT_PATH=/model/MiniMax-M3-EAGLE3
 
-SERVER_PORT=${SERVER_PORT:-40001}
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}${ROCM_HOME:-/opt/dtk}/.hyhal/rocm_smi/lib"
+export PYTHONPATH="$PROJECT_ROOT/runtime/decode"
+
+export NCCL_SOCKET_IFNAME="$NETWORK_IFACE"
+export GLOO_SOCKET_IFNAME="$NETWORK_IFACE"
+
 export SGLANG_HEALTH_CHECK_TIMEOUT=120
 export SGLANG_NCCL_ALL_GATHER_IN_OVERLAP_SCHEDULER_SYNC_BATCH=1
-export PYTHONPATH="$PROJECT_ROOT/runtime/decode"
 export SGLANG_KV_LAYOUT_HCU_FA=false
 
-export NCCL_IB_HCA="${NCCL_IB_HCA:-${IB_DEVICES//,/:1,}:1}"
+export NCCL_IB_HCA="${IB_DEVICES//,/:1,}:1"
 export ROCSHMEM_ALLOWED_IBV_DEVICES="$IB_DEVICES"
 export MC_ENABLE_DEST_DEVICE_AFFINITY=1
 export MC_TE_FILTERS="$IB_DEVICES"
@@ -218,8 +204,6 @@ export SGLANG_DISAGGREGATION_BOOTSTRAP_TIMEOUT=600
 export SGLANG_DISAGGREGATION_WAITING_TIMEOUT=600
 
 export SGLANG_REQUIRE_KV_CACHE_SCALES=1
-export SGLANG_OPT_USE_MINIMAX_FLASH_MLA_GFX938=0
-export SGLANG_OPT_USE_BF16_ROUTER_GEMM=1
 export SGLANG_ENABLE_M3_TRITON_FP8_ATTN_GEMM=1
 export SGLANG_USE_LIGHTOP=1
 export SGLANG_USE_LIGHTOP_CHANNEL_FP8=1
@@ -237,6 +221,7 @@ export SGLANG_OPT_USE_EAGLE3_LM_HEAD_TOP1=1
 unset SGLANG_OPT_USE_MINIMAX_MULTI_Q_VERIFY_SCORE
 export SGLANG_MINIMAX_MTP_NUM_TOPK_CHUNKS=4
 
+LOG_DIR="$SCRIPT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/decode-$(date +%Y%m%d-%H%M%S)-$$.log"
 printf "Log file: %s\n" "$LOG_FILE"
@@ -244,7 +229,7 @@ printf "Log file: %s\n" "$LOG_FILE"
 python3 -u -m sglang.launch_server \
   --dist-init-addr "${DIST_INIT_ADDR:-127.0.0.1:26320}" \
   --model-path "$MODEL_PATH" \
-  --served-model-name "$SERVED_MODEL_NAME" \
+  --served-model-name MiniMax-M3 \
   --trust-remote-code \
   --dtype bfloat16 \
   --quantization compressed-tensors \
@@ -297,13 +282,7 @@ python3 -u -m sglang.launch_server \
   --disable-custom-all-reduce 2>&1 | tee "$LOG_FILE"
 ~~~
 
-启动示例中的设备名和地址按现场替换。
-
-~~~bash
-NETWORK_IFACE='p14p1' IB_DEVICES='mlx5_0,mlx5_1,mlx5_2,mlx5_3,mlx5_4,mlx5_5,mlx5_6,mlx5_7' \
-MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 \
-DRAFT_PATH=/model/MiniMax-M3-EAGLE3 bash D.sh
-~~~
+改好脚本顶部的模型路径和网卡后执行 `bash D.sh`。
 
 ## 5. router.sh
 
@@ -346,7 +325,7 @@ curl --noproxy '*' -fsS "$ROUTER/v1/chat/completions" \
 
 ## 7. P 端参数文件
 
-将以下两个完整 JSON 保存到 P.sh 所在目录。使用其他文件时，可以通过 DEEPEP_CONFIG 和 DEEPGEMM_CONFIG 指定容器内路径。第一份控制 DeepEP normal dispatch 和 combine，第二份按 E/N/K 及 M 区间匹配 DeepGEMM contiguous GEMM。
+将以下两个完整 JSON 保存到 P.sh 所在目录。更换配置时，修改 P.sh 顶部的 DEEPEP_CONFIG 和 DEEPGEMM_CONFIG。第一份控制 DeepEP normal dispatch 和 combine，第二份按 E/N/K 及 M 区间匹配 DeepGEMM contiguous GEMM。
 
 ### deepep-prefill.json
 
