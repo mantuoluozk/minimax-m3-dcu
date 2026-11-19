@@ -1,90 +1,101 @@
 # MiniMax-M3 DCU
 
-MiniMax-M3 Channel FP8 W8A8 的海光 DCU 适配。验证拓扑为两台 8×BW1100，P 端 CP8，D 端 DP8/EP8，Mooncake 传输与 EAGLE3。
+在兼容的海光 DCU 基础镜像上构建 MiniMax-M3 Channel FP8 W8A8 的优化版 SGLang，使用同一张镜像启动两台 8×BW1100 的 Prefill 和 Decode。P 使用 CP8、FP8 KV 和 DeepEP，D 使用 DP8/EP8、EAGLE3、Triton FP8 主 Attention 和 Decode Graph full。两端使用 Mooncake RDMA 交接主 KV。
 
-## 从已有镜像构建
+[基础镜像、默认 SGLang 与 P/D 优化记录](docs/optimization.md)
 
-先选一个与目标 DCU 和宿主机驱动匹配的 Linux AMD64 推理镜像，再把本仓库的 SGLang 源码和原生扩展构建进新镜像。基础镜像可通过 `BASE_IMAGE` 自选，需要提供兼容的 Python、PyTorch、DTK/HIP、DeepEP、DeepGEMM、LightOp、Mooncake 和 SGLang Router。P 端构建还需要 HIP 编译器、C++ 编译器和 Ninja。当前 Dockerfile 按 `/opt/dtk` 和 `gfx938` 构建扩展。
+## 1. 构建镜像
 
-```bash
+基础镜像可自选。需要 Linux amd64、兼容宿主机的 DTK/HIP（路径 `/opt/dtk`）、HIP/C++ 编译器、Ninja、Python/PyTorch，以及兼容的 DeepEP、DeepGEMM、LightOp、Triton、Mooncake 和 SGLang Router 依赖。基础镜像可以已有 SGLang，也可以只提供上述运行和编译依赖。
+
+构建时 Dockerfile 复制本仓库的 SGLang Python 源码，生成 Decode 专用运行时，并编译 gfx938 原生扩展。P/D 启动脚本分别用 `PYTHONPATH` 选中这些源码，基础镜像自带的 SGLang 安装无需处理。
+
+~~~bash
 git clone https://github.com/mantuoluozk/minimax-m3-dcu.git
 cd minimax-m3-dcu
 
-BASE_IMAGE='<你的海光推理基础镜像:标签>'
-IMAGE='minimax-m3-dcu:custom'
-docker build --build-arg BASE_IMAGE="$BASE_IMAGE" -t "$IMAGE" .
-```
+BASE_IMAGE=42.228.13.241:666/jenkins/model_test_env/sglang:0.5.18-ubuntu22.04-dtk2604-py3.10-20260920-0101
+REV=$(git rev-parse --short HEAD)
+IMAGE="${BASE_IMAGE}-sglang-${REV}"
 
-Dockerfile 把仓库源码复制进镜像，生成 D 端运行时，并用基础镜像内的工具链编译 P 端原生扩展。启动时，`prefill` 和 `decode` 入口分别设置自己的 `PYTHONPATH`，使服务优先加载仓库里的 SGLang。也就是说，服务运行时用的是适配版本，基础镜像提供依赖。
+docker build --build-arg "BASE_IMAGE=$BASE_IMAGE" -t "$IMAGE" .
+docker run --rm --entrypoint bash "$IMAGE" -ec '
+  PYTHONPATH=sglang-das/python:build python3 -c "import torch, sglang, m31_minimax_ops; print(sglang.__file__, m31_minimax_ops.__file__)"
+  PYTHONPATH=runtime/decode python3 -c "import sglang; print(sglang.__file__)"
+'
+~~~
 
-构建后可核对 Python 实际解析到的包路径：
+P 应从 `/opt/minimax-m3-dcu/sglang-das/python` 解析 SGLang，D 应从 `/opt/minimax-m3-dcu/runtime/decode` 解析。将同一镜像、同一 Git 提交的部署文件准备到 P 和 D 两台机器。跨机传输可用 docker save 和 docker load，或者推送到两端可访问的镜像仓库。权重按下节单独挂载。
 
-```bash
-docker run --rm --entrypoint python3 \
-  -e PYTHONPATH=/opt/minimax-m3-dcu/sglang-das/python:/opt/minimax-m3-dcu/build \
-  "$IMAGE" -c 'import importlib.util; print(importlib.util.find_spec("sglang").origin)'
+## 2. 配置 P/D 和 JSON
 
-docker run --rm --entrypoint python3 \
-  -e PYTHONPATH=/opt/minimax-m3-dcu/runtime/decode \
-  "$IMAGE" -c 'import importlib.util; print(importlib.util.find_spec("sglang").origin)'
-```
+在两台宿主机各准备一份仓库。启动时从仓库目录读取脚本和 JSON，默认把宿主机 /model 只读挂载到容器 /model。权重若在其他目录，启动容器时设置 MODEL_HOST_DIR 为权重目录的宿主机上级目录。
 
-P 端应解析到 `/opt/minimax-m3-dcu/sglang-das/python/sglang/__init__.py`，D 端应解析到 `/opt/minimax-m3-dcu/runtime/decode/sglang/__init__.py`。只为 D 构建时可以传 `--build-arg BUILD_NATIVE=0` 跳过 P 端扩展编译。更换基础镜像后，在目标环境验证 P/D 启动和长请求。
+| 文件或变量 | 配置 |
+|---|---|
+| P.sh | 必填 NETWORK_IFACE、IB_DEVICES、MODEL_PATH。默认服务端口 40000、Mooncake bootstrap 8998。 |
+| D.sh | 必填 NETWORK_IFACE、IB_DEVICES、MODEL_PATH、DRAFT_PATH。默认端口 40001，使用与 P 相同的主模型权重和 MiniMax-M3 EAGLE3 draft。 |
+| SERVED_MODEL_NAME | 两端默认 MiniMax-M3。修改时两端填相同值。 |
+| deploy/config/deepep-prefill.json | P 的 DeepEP normal 调度配置，由 P.sh 的 --deepep-config 加载。新拓扑可用容器内绝对路径 DEEPEP_CONFIG 指向对应配置。 |
+| deploy/config/deepgemm-e16.json | P 的 contiguous DeepGEMM E16 试验规则，支持 DEEPGEMM_CONFIG 覆盖。E、N、K 或 M 区间不匹配时由运行时走默认路径。 |
+| D 的 DeepEP | 使用 auto 模式及每 rank 128 token dispatch 上限。64 的现场对照基本持平。 |
+| router.sh | 填 PREFILL_URL 和 DECODE_URL，默认 Router 端口 40010、Prometheus 3035。 |
 
-## 源码布局
+NETWORK_IFACE 是控制面网卡名，IB_DEVICES 为本机逗号分隔的 RDMA 设备名，可在宿主机用 ip -br addr 和 ibv_devices 查询。Docker 使用 host 网络，同一宿主机的容器共享监听端口。
 
-- `sglang-das/` 保存完整 SGLang DAS 源码，基于公开提交 `2c841655fe7852cde42eaaff2c1d414cf4038df1`。其中 `python/sglang` 取自已测 P 运行时，含 QK HIP、CP-v2 普通 Attention 兼容、FP8 packet 和 DeepGEMM E16 适配。
-- `deploy/decode-overlay/` 在构建时还原已测 D 运行时。D 保留 EAGLE3 和启动通信预热。原重叠候选补丁位于 `experiments/decode-recv-overlap/`，仅供复核。
-- `native/` 保存 LightOp 候选源码和 bindings。构建时使用基础镜像自带的 Torch、DTK、HIP 编译 gfx938 扩展。各依赖由基础镜像提供。
-- `benchmarks/` 保存性能汇总，`deploy/source-manifest.json` 记录源快照和差异。模型、draft 权重、原容器和逐请求日志独立保存。
+## 3. 启动
 
-`experiments/prefill-cp/` 保留 CP、QK 及 raw scatter 的阶段补丁，`experiments/oai-triton/` 保留按当前 Triton 量化契约适配的融合候选。候选文件对应各自实验基线，默认镜像使用已测 QK、CP-v2 和 FP8 packet。
+下面命令中的网卡、RDMA 设备列表和 IP 替换成现场值。docker.sh 进入容器交互 shell，后续启动参数在该 shell 里执行。
 
-## 启动容器和服务
+~~~bash
+# P 宿主机，从仓库目录执行
+DOCKER_IMAGE="$IMAGE" CONTAINER_NAME=minimax-m3-p bash docker.sh
+~~~
 
-在 P、D 各自的宿主机上，从仓库根目录执行 `docker.sh`。脚本沿用服务器 `launch_docker.sh` 的 host 网络、host IPC、DCU 设备和 `/opt/hyhal`、`/data/xsf`、`/model` 挂载，并把当前仓库只读挂载到容器内 `/workspace/minimax-m3-dcu`。脚本沿用服务器的特权容器配置，请在具备相应权限的节点运行。
-
-```bash
-# P 宿主机
-DOCKER_IMAGE=minimax-m3-dcu:custom CONTAINER_NAME=minimax-m3-p bash docker.sh
-
-# D 宿主机
-DOCKER_IMAGE=minimax-m3-dcu:custom CONTAINER_NAME=minimax-m3-d bash docker.sh
-```
-
-如果 P、D 分别构建，给 `DOCKER_IMAGE` 填各自的标签。默认命令会进入容器 shell，`-v` 启动容器后只打印进入命令。可以在创建容器时用 `DOCKER_ENV_FILE` 指定 Docker 环境变量文件，或者进入容器后再设置网卡、RDMA 设备和模型路径。
-
-```bash
+~~~bash
 # P 容器内
-cd /workspace/minimax-m3-dcu
-export NETWORK_IFACE='<本机网卡>'
-export IB_DEVICES='<逗号分隔的本机 RDMA 设备>'
-export MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8
-bash P.sh
+NETWORK_IFACE='<P 控制网卡>' IB_DEVICES='<P RDMA 设备列表>' \
+MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 bash P.sh
+~~~
 
+~~~bash
+# D 宿主机，从仓库目录执行
+DOCKER_IMAGE="$IMAGE" CONTAINER_NAME=minimax-m3-d bash docker.sh
+~~~
+
+~~~bash
 # D 容器内
-cd /workspace/minimax-m3-dcu
-export NETWORK_IFACE='<本机网卡>'
-export IB_DEVICES='<逗号分隔的本机 RDMA 设备>'
-export MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8
-export DRAFT_PATH=/model/MiniMax-M3-EAGLE3
-bash D.sh
+NETWORK_IFACE='<D 控制网卡>' IB_DEVICES='<D RDMA 设备列表>' \
+MODEL_PATH=/model/MiniMax-M3-Channel-FP8-w8a8 \
+DRAFT_PATH=/model/MiniMax-M3-EAGLE3 bash D.sh
+~~~
 
-# 等 P、D 健康后，在 P 容器的另一个 shell 中执行
-cd /workspace/minimax-m3-dcu
+两端 /v1/models 可访问后，在 P 宿主机另开终端进入容器启动 Router。首次 D 图捕获可能需要数分钟。
+
+~~~bash
+docker exec -it -w /workspace/minimax-m3-dcu minimax-m3-p bash
+~~~
+
+~~~bash
 PREFILL_URL="http://<P_IP>:40000" DECODE_URL="http://<D_IP>:40001" bash router.sh
-```
+~~~
 
-`P.sh` 和 `D.sh` 使用镜像内 `/opt/minimax-m3-dcu` 的运行时及扩展。调整启动参数可直接编辑宿主机仓库中的角色脚本，修改 SGLang 源码或扩展后重新构建镜像。也可以直接使用镜像入口参数 `prefill`、`decode` 和 `router`。
+宿主机仓库下的 logs/ 收集各角色带时间戳的日志，仓库和配置本身只读挂载到容器。已有同名容器会被复用，新镜像或挂载参数变化时使用新的 CONTAINER_NAME。使用现有容器启动脚本也可以，挂载仓库及权重后执行对应角色脚本，并设置可写 LOG_DIR。
 
-默认端口 P 40000、D 40001、Router 40010，P bootstrap 8998。以两端 `/health`、Router `/workers` 和通过 Router 的长提示词请求确认部署。E16 JSON 是命中验证用的试验表，可用 `DEEPGEMM_CONFIG` 指定其他已验证规则。
+## 4. 验证
 
-## 已归档的镜像示例
+~~~bash
+ROUTER="http://<P_IP>:40010"
+curl --noproxy '*' -fsS "$ROUTER/workers"
+curl --noproxy '*' -fsS "$ROUTER/v1/chat/completions" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"MiniMax-M3","messages":[{"role":"user","content":"验证码是7359。请只输出验证码。"}],"max_tokens":16,"temperature":0,"chat_template_kwargs":{"thinking_mode":"disabled"}}'
+~~~
 
-2026-11-12 的交付归档包含 `minimax-m3-dcu:prefill-20261112` 和 `minimax-m3-dcu:decode-20261112`。当时 P、D 各自沿用原测试基础镜像，标签尾部分别为 `dtk2604-py3.10-20260920-0101` 和 `dtk26041-py3.10-20261019-0103`。两套产物通过无 DCU 设备挂载的入口、Torch 和 SGLang 导入检查，P 原生扩展编译和导入通过。
+确认两个 worker 都健康、响应返回 7359。正式性能对照使用固定长提示词和足够的生成 token，结合 D 日志核对 triton_fp8_main_attn_gemm=True 与实际 Decode batch 的 cuda graph: True。
 
-自建镜像可用 `docker save -o minimax-m3-dcu.tar "$IMAGE"` 导出，到目标机器用 `docker load -i minimax-m3-dcu.tar` 导入。
+## 源码位置
 
-## 性能记录
-
-历史实测使用 7342 输入、128 输出，EAGLE3 固定。迁移前复跑对比 CP FP8 配方，单并发平均 TTFT 7.2544→1.1399 秒，16 并发整批输出 16.5506→75.3942 token/s。客户端 TPOT 同时上升。C16 正式计时每配置一轮。数据来自归档的原运行时，镜像打包后需在目标环境复验。
+- sglang-das/ 保存完整 DAS 源码，交付来源见 deploy/source-manifest.json。
+- deploy/decode-overlay/ 保存 D 专用差异，构建时用它生成 D 的独立运行时。
+- native/ 保存 HIP 扩展和绑定。experiments/ 保存候选补丁，benchmarks/ 保存对照结果。

@@ -7,12 +7,14 @@ container_name="${CONTAINER_NAME:-minimax-m3-dcu}"
 repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 work_dir=/workspace/minimax-m3-dcu
 shm_size="${SHM_SIZE:-256G}"
+log_dir="$repo_dir/logs"
 
 mounts=(
     "/opt/hyhal:/opt/hyhal"
     "/data/xsf:/data/xsf"
-    "/model:/model"
+    "${MODEL_HOST_DIR:-/model}:/model:ro"
     "$repo_dir:$work_dir:ro"
+    "$log_dir:/var/log/minimax-m3"
 )
 devices=(/dev/kfd /dev/mkfd /dev/dri)
 extra_args=(
@@ -47,10 +49,12 @@ if docker container inspect "$container_name" >/dev/null 2>&1; then
         docker start "$container_name"
     fi
 else
+    mkdir -p "$log_dir"
     run=(docker run -id --name "$container_name" --shm-size "$shm_size" "${extra_args[@]}")
     for dev in "${devices[@]}"; do run+=(--device "$dev"); done
     for mount in "${mounts[@]}"; do run+=(-v "$mount"); done
     if [[ -n "${DOCKER_ENV_FILE:-}" ]]; then run+=(--env-file "$DOCKER_ENV_FILE"); fi
+    run+=(-e LOG_DIR=/var/log/minimax-m3)
     # Keep an interactive shell available even when the image declares its own ENTRYPOINT.
     "${run[@]}" --workdir "$work_dir" --entrypoint /bin/bash "$docker_image" -i
 fi
