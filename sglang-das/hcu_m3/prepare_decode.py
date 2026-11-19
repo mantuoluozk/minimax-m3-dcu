@@ -1,11 +1,11 @@
 """Materialize the restored D runtime from P source and the recorded overlay."""
-import json
 import shutil
 from pathlib import Path
 
-root = Path(__file__).resolve().parents[1]
+source_dir = Path(__file__).resolve().parent
+root = source_dir.parents[1]
 source = root / 'sglang-das/python'
-overlay = root / 'deploy/decode-overlay'
+overlay = source_dir / 'decode-overlay'
 target = root / 'runtime/decode'
 if target.exists():
     raise SystemExit(f'{target} already exists; build from a clean checkout')
