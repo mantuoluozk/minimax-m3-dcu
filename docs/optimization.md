@@ -16,47 +16,23 @@
 
 实验基线已经使用用户验证过的 P/D Triton Attention、FP8 KV、Mooncake、DeepEP/DeepGEMM 和 EAGLE3。11 月初先恢复这一配方，统一两端运行时，在 D 补 HCU 通信预热，P 的 prefill chunk 和 token 上限收至 32768，最多同批预填充四个请求。基础镜像的原装 SGLang 未作为端到端 A/B 控制组。可复现的控制组为迁移前源码快照加现场脚本，详细来源见 [源码清单](../sglang-das/hcu_m3/source-manifest.json)。
 
-部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端用同一基础镜像，按 [README](../README.md) 同时准备 P 和 D 的运行时。交换角色时，按目标节点调整脚本中的网卡和 Router 地址，并在运行 D 的节点挂载 EAGLE3 draft。容器沿用现场的 launch.sh，使用 host 网络并挂载宿主机驱动目录、DCU/RDMA 设备和主模型。D 另挂载 EAGLE3 draft。以 /public/minimax-m3 为例，将本页的脚本和 JSON 保存到该目录，源码克隆到同目录的 sglang-source/。源码另放时，修改脚本顶部的 PROJECT_ROOT。P 从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
+部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端用同一基础镜像，按 [README](../README.md) 同时准备 P 和 D 的运行时。交换角色时，按目标节点调整脚本中的网卡和 Router 地址，并在运行 D 的节点挂载 EAGLE3 draft。容器沿用现场的 launch.sh，使用 host 网络并挂载宿主机驱动目录、DCU/RDMA 设备和主模型。以 /public/minimax-m3 为例，将本页的脚本和 JSON 保存到该目录，源码克隆到同目录的 sglang-source/。源码另放时，修改脚本顶部的 PROJECT_ROOT。P 从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
 
 ## 2. 优化项和实测结果
 
-### P 端改动与结果
+- **P 端**使用 gfx938 QK/index Norm + RoPE HIP、CP-v2 普通 Attention 兼容和 FP8 KV packet，按 EP8 零冗余布局适配 DeepGEMM E16。
+- **D 端**开启 Decode Graph full 和 Triton FP8 主 Attention，使用 EAGLE3 和普通 verify scorer。
 
-| 改动 | 交付状态与对照 |
-|---|---|
-| QK/index Norm + RoPE | P 使用 gfx938 HIP 实现。256/2048 行单算子图回放分别约 2.27× / 3.39×，早期 7340 输入短输出 C1 的 TTFT 中位数 7.253 → 7.090 s。 |
-| CP-v2 普通层兼容 | 普通 Attention 层 gather 全量 Q/K/V 后重分片，稀疏层继续 query-sharded CP。解决普通层分片和 metadata 不符，普通层有重复计算。 |
-| CP FP8 packet | 主 K/V 按 checkpoint scale 打包，索引 K 仍用 BF16。P 内 CP payload 2304 → 1280 bytes/token。同布局下 C1 TTFT 1.2735 → 1.1399 s，C16 输出吞吐 74.08 → 75.39 tok/s。 |
-| DeepGEMM E16 表 | 现拓扑 EP8、零冗余，适配 contiguous 规则 E17 → E16 并验证命中。C16 75.39 → 75.69 tok/s，处于小样本波动范围。 |
-| OAI 激活/量化融合、raw gather/scatter | 已完成回迁候选，默认关闭。OAI 在 1952/128 C16 的吞吐 −2.46%，raw gather/scatter 在 7342/128 C16 的吞吐 −1.25%。 |
+### 4K 输入 / 1K 输出 · 单并发
 
-在 12/13 上以 7342 输入 / 128 输出复跑迁移前配方，保持 EAGLE3，整体迁移后 C1 TTFT 7.254 → 1.140 s，C16 TTFT 95.208 → 11.921 s，C16 窗口输出 16.55 → 75.39 tok/s。C1 TPOT 85.84 → 99.22 ms，C16 TPOT 27.71 → 72.68 ms。这组比较包含布局、调度和算子等多项变化。 [原始汇总](https://github.com/mantuoluozk/minimax-m3-dcu/tree/1d8e85e6ab79a161a5bf46a605d8a8ddf5f82ade/benchmarks/migration-vs-pre-m31-summary.json)
+在 12/37 两台 BW1100 上使用 4096 个随机输入 token 和 1024 个输出 token，两组各完成一条。优化前是同一套 P/D 运行时在 D 关闭 Graph 和 Triton FP8 主 Attention 时的结果，P 配置和 EAGLE3 已就绪。优化后同时开启这两项。
 
-### D 端改动与结果
-
-| 改动 | 交付状态与对照 |
-|---|---|
-| Decode Graph full | 开启 --cuda-graph-backend-decode full，配合 EAGLE3 和普通 verify scorer。捕获并回放 target verify、draft decode、draft extend。 |
-| Triton FP8 主 Attention | 启用 SGLANG_ENABLE_M3_TRITON_FP8_ATTN_GEMM=1。主模型稀疏 Attention 使用 FP8 计算路径，索引 K 保持模型精度，draft KV 保持 BF16。 |
-
-同一 12/37 镜像、相同输入下，Graph 和 FP8 主 Attention 的增量依次实测。7342/128 的 C1 为两轮均值，C16 用形状预热后的正式窗口。4096/1024 每配置一条。
-
-| 场景 | Graph off | Graph full | Graph full + FP8 主 Attention |
-|---|---:|---:|---:|
-| 7342/128 C1 TPOT | 100.80 ms | 41.96 ms | 22.05 ms |
-| 7342/128 C1 输出吞吐 | 9.11 tok/s | 19.24 tok/s | 31.36 tok/s |
-| 7342/128 C16 输出吞吐 | 67.98 tok/s | 97.26 tok/s | 111.83 tok/s |
-| 7342/128 C16 整批耗时 | 30.13 s | 21.06 s | 18.31 s |
-| 4096/1024 C1 TPOT | 61.28 ms | 27.39 ms | 15.27 ms |
-| 4096/1024 C1 输出吞吐 | 16.13 tok/s | 35.64 tok/s | 62.67 tok/s |
-
-7342/128 每配置 35 条请求通过检索码、token 数及完整输出检查。C16 客户端 TPOT 会受 SSE 分批到达影响，表中采用窗口吞吐和整批耗时。 [现场对照汇总](https://github.com/mantuoluozk/minimax-m3-dcu/tree/1d8e85e6ab79a161a5bf46a605d8a8ddf5f82ade/benchmarks/site-12-37)
-
-### 当前交付配置
-
-P 采用 QK HIP、CP-v2、FP8 packet、DeepEP normal 和 E16 配置。D 采用 EAGLE3、普通 verify scorer、DeepEP auto、Graph full 和 Triton FP8 主 Attention。部署脚本和 JSON 见下文。
-
-交付检查范围为容器内 gfx938 扩展编译、文档脚本语法、JSON 和 P/D 导入路径。远端性能数据来自前述 12/13 和 12/37 实测。
+| 指标 | D 优化前 | D 优化后 |
+|---|---:|---:|
+| 首 token 延迟 TTFT | 781.47 ms | 706.95 ms |
+| 每输出 token 延迟 TPOT | 61.28 ms | 15.27 ms |
+| 输出吞吐 | 16.13 tok/s | 62.67 tok/s |
+| 端到端耗时 | 63.48 s | 16.33 s |
 
 ## 3. P.sh
 
