@@ -9,9 +9,9 @@
 - BW1100，已在此基础镜像验证编译和导入
   `42.228.13.241:666/jenkins/model_test_env/sglang:0.5.18-ubuntu22.04-dtk2604-py3.10-20260920-0101`
 - 超节点基础镜像示例，按现场 DTK 和依赖版本选用
-  `42.228.13.241:5000/jenkins/model_test_env/sglang:0.5.18-ubuntu22.04-dtk26041-py3.10-scalex40-sf_b020-20260923-1040`
+  `42.228.13.241:5000/jenkins/model_test_env/sglang:0.5.18-ubuntu22.04-dtk26041-py3.10-scalex40-20261016-0200`
 
-进入按海光常规方式启动的 SGLang 容器，在自己的部署目录执行以下命令。源码放在 `sglang-source/`，部署脚本和 JSON 放在它的上一级。
+使用已有的 `launch.sh` 进入 SGLang 容器，在自己的部署目录执行以下命令。源码放在 `sglang-source/`，部署脚本和 JSON 放在它的上一级。
 
 ~~~bash
 git clone --depth 1 https://github.com/mantuoluozk/minimax-m3-dcu.git sglang-source
