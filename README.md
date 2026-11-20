@@ -24,6 +24,6 @@ python3 sglang-das/hcu_m3/prepare_decode.py
 
 ## 优化内容
 
-- **P 端**增加 gfx938 的 QK/index Norm + RoPE HIP 路径，在海光原有 CP-v2 上补普通 Attention 层兼容与 FP8 KV packet 交换，并适配 EP8 零冗余专家布局的 DeepGEMM E16 调优规则。
-- **D 端**在交付配方中开启原分支已有的 Decode Graph full 与 Triton FP8 主 Attention，保留 EAGLE3，补 HCU 通信组预热，并因 37 节点的历史 VMFault 关闭 multi-Q verify。
+- **P 端**为符合形状条件的稀疏 QK/index Norm + RoPE 接入 LightOp HIP 路径，保留原 Triton 回退。在海光原有 CP-v2 上补普通 Attention 层兼容与 FP8 KV packet 交换，并适配 EP8 零冗余布局的 DeepGEMM E16 调优规则。
+- **D 端**开启原分支和 Cookbook 已有的 Decode Graph full、Triton FP8 主 Attention 与 EAGLE3。源码改动补足 HCU 通信组预热与繁忙时的健康检查，部署脚本因 37 节点的历史 VMFault 关闭 multi-Q verify。
 - 基础环境、完整 P/D 和 Router 脚本、curl 示例、DeepEP/DeepGEMM JSON 和实测对照见 [P/D 优化与部署文档](docs/optimization.md)。
