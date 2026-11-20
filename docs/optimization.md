@@ -14,25 +14,25 @@
 | M3.1 参考 | 研发源码 a47dd532b371da0ffa013e299a843534ba3338e1、LightOp f162c8876e28694ef54b322722d9f67437b86814 |
 | 12/37 已测镜像 | 上述基础镜像加 -sglang-212939e 后缀。D 端开启 Decode Graph full 和 Triton FP8 主 Attention，并关闭 multi-Q verify。下方脚本整理了这套现场配置。 |
 
-实验基线已经使用用户验证过的 P/D Triton Attention、FP8 KV、Mooncake、DeepEP/DeepGEMM 和 EAGLE3。11 月初先恢复这一配方，统一两端运行时，在 D 补 HCU 通信预热，P 的 prefill chunk 和 token 上限收至 32768，最多同批预填充四个请求。基础镜像的原装 SGLang 未作为端到端 A/B 控制组。可复现的控制组为迁移前源码快照加现场脚本，详细来源见 [源码清单](../sglang-das/hcu_m3/source-manifest.json)。
+端到端基线采用用户在超节点验证过的 Triton/FP8 KV P/D 配方，将 P、D 各迁移为单机八卡。保留 Mooncake、DeepEP/DeepGEMM、EAGLE3、multi-Q verify 和关闭 Decode Graph 的原配方。P 的 chunk 为 131072、prefill token 上限为 524288。基线容器使用表中的 BW1100 基础镜像，P/D 加载未修改的海光 `2c841655f` 源码。
 
 部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端用同一基础镜像，按 [README](../README.md) 同时准备 P 和 D 的运行时。交换角色时，按目标节点调整脚本中的网卡和 Router 地址，并在运行 D 的节点挂载 EAGLE3 draft。容器沿用现场的 launch.sh，使用 host 网络并挂载宿主机驱动目录、DCU/RDMA 设备和主模型。以 /public/minimax-m3 为例，将本页的脚本和 JSON 保存到该目录，源码克隆到同目录的 sglang-source/。源码另放时，修改脚本顶部的 PROJECT_ROOT。P 从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
 
 ## 2. 优化项和实测结果
 
-- **P 端**使用 gfx938 QK/index Norm + RoPE HIP、CP-v2 普通 Attention 兼容和 FP8 KV packet，按 EP8 零冗余布局适配 DeepGEMM E16。
-- **D 端**开启 Decode Graph full 和 Triton FP8 主 Attention，使用 EAGLE3 和普通 verify scorer。
+- **P 端源码与调优**增加 gfx938 的 QK/index Norm + RoPE HIP 路径，在原有 CP-v2 上补普通 Attention 层兼容与 FP8 KV packet 交换，并按 EP8 零冗余专家布局适配 DeepGEMM E16 调优规则。规则按实际 GEMM 形状匹配。
+- **D 端运行配置**开启原分支已有的 Decode Graph full 与 Triton FP8 主 Attention，保留 EAGLE3。37 上的交付配置关闭 multi-Q verify，并补 HCU 通信组预热。 [海光 M3 Cookbook](https://github.com/HYGON-AI/inference-cookbook-das/blob/2b1648c61ca51be3871be9a18993052a5b2693a2/docs/model-deployment/sglang/minimax-m3.md)
 
 ### 4K 输入 / 1K 输出 · 单并发
 
-优化后结果来自 12/37 两台 BW1100，4096 个随机输入 token、1024 个输出 token，完成一条请求。整套 P/D 优化前缺少这个口径的完整实测，先留空。
+两组均在 12/37 两台 BW1100 上用 SGLang serving benchmark 测量。输入为 4096 个随机 token ID，生成 1024 个 token，并发 1，各有 1 条正式请求。对照包含 P/D 配置和源码的整体变化。
 
 | 指标 | P/D 优化前 | P/D 优化后 |
 |---|---:|---:|
-| 首 token 延迟 TTFT | | 706.95 ms |
-| 每输出 token 延迟 TPOT | | 15.27 ms |
-| 输出吞吐 | | 62.67 tok/s |
-| 端到端耗时 | | 16.33 s |
+| 首 token 延迟 TTFT | 4328.99 ms | 706.95 ms |
+| 每输出 token 延迟 TPOT | 83.61 ms | 15.27 ms |
+| 输出吞吐 | 11.39 tok/s | 62.67 tok/s |
+| 端到端耗时 | 89.86 s | 16.33 s |
 
 ## 3. P.sh
 
