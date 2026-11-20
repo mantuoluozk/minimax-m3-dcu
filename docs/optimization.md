@@ -20,9 +20,17 @@
 
 ## 2. 优化项和实测结果
 
-- **P 端源码**为满足形状条件的稀疏 QK/index Norm + RoPE 接入 LightOp HIP，保留原 Triton 回退。在原有 CP-v2 上补普通 Triton Attention 层的全量计算后重分片，并为稀疏层增加 FP8 主 KV packet 交换。索引 K 保持 BF16，P 内对应交换载荷从 2304 降至 1280 bytes/token。
-- **P 端调优**启用 CP-v2 和 DP Attention，将 chunk 与 prefill token 上限设为 32768，并将每批 prefill 请求数上限设为 4。DeepGEMM 规则从 E17 适配到 EP8 零冗余专家布局的 E16。短测已确认符合范围的形状命中，独立吞吐收益尚未证实。
-- **D 端部署与兼容**开启原分支和 Cookbook 已有的 Decode Graph full 与 Triton FP8 主 Attention，保留 EAGLE3。源码补足 HCU 上的 TP/MoE-EP 启动预热及 D 繁忙时的健康检查。37 的交付配置因历史 VMFault 关闭 multi-Q verify。 [海光 M3 Cookbook](https://github.com/HYGON-AI/inference-cookbook-das/blob/2b1648c61ca51be3871be9a18993052a5b2693a2/docs/model-deployment/sglang/minimax-m3.md)
+### P 端适配优化项
+
+- **稀疏 QK/index Norm + RoPE**为符合形状条件的输入接入 LightOp HIP 路径，保留原 Triton 回退。
+- **CP-v2**让普通 Triton Attention 层在全量计算后重新分片，为稀疏层增加 FP8 主 KV packet 交换。索引 K 保持 BF16，P 内对应交换载荷从 2304 降至 1280 bytes/token。
+- **Prefill 调度**启用 CP-v2 与 DP Attention。chunk 和 prefill token 上限均设为 32768，每批最多 4 条请求。
+- **DeepGEMM**将 E17 调优规则适配到 EP8 零冗余布局的 E16。短测确认符合范围的形状命中，独立吞吐收益尚未证实。
+
+### D 端适配优化项
+
+- **HCU 通信和健康检查**补足 TP/MoE-EP 启动预热，以及 Decode 繁忙时的健康检查。
+- **Decode 配置**启用海光原分支已有的 Graph full、Triton FP8 主 Attention 和 EAGLE3。37 节点因历史 VMFault 关闭 multi-Q verify。 [海光 M3 Cookbook](https://github.com/HYGON-AI/inference-cookbook-das/blob/2b1648c61ca51be3871be9a18993052a5b2693a2/docs/model-deployment/sglang/minimax-m3.md)
 
 ### 4K 输入 / 1K 输出 · 单并发
 
