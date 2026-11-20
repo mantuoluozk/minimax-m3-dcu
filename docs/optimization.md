@@ -14,7 +14,7 @@
 | M3.1 参考 | 研发源码 a47dd532b371da0ffa013e299a843534ba3338e1、LightOp f162c8876e28694ef54b322722d9f67437b86814 |
 | 12/37 已测镜像 | 上述基础镜像加 -sglang-212939e 后缀。D 端开启 Decode Graph full 和 Triton FP8 主 Attention，并关闭 multi-Q verify。下方脚本整理了这套现场配置。 |
 
-官方对照采用表中的 BW1100 基础镜像与未修改的海光 `2c841655f` 源码。D 端按 Cookbook 启用原分支已有的 Decode Graph full、Triton FP8 主 Attention 和 EAGLE3。公开 Cookbook 的 P 端 FlashMLA 使用 BF16 KV 和 page128，D 端使用 FP8 KV 和 page64。真实 Mooncake P/D 传输要求两侧的主 KV 类型和 page size 一致，现场配方使用两侧 FP8 E4M3 KV 和 page64。 [海光 M3 Cookbook](https://github.com/HYGON-AI/inference-cookbook-das/blob/2b1648c61ca51be3871be9a18993052a5b2693a2/docs/model-deployment/sglang/minimax-m3.md) · [PD 握手检查](https://github.com/HYGON-AI/sglang-das/blob/2c841655fe7852cde42eaaff2c1d414cf4038df1/python/sglang/srt/disaggregation/common/conn.py#L739)
+迁移前实测使用留存的迁移前运行时和用户验证过的 Triton/FP8 KV P/D 配方。保留 Mooncake、DeepEP/DeepGEMM、EAGLE3 和 HCU 启动兼容补丁。P 的 chunk 和 prefill token 上限均为 32768。D 关闭 Decode Graph、Triton FP8 主 Attention 和 multi-Q verify。公开 Cookbook 的 P 端 FlashMLA 使用 BF16 KV 和 page128，D 端使用 FP8 KV 和 page64。真实 Mooncake P/D 传输要求两端 KV 类型和 page size 一致，现场两端采用 FP8 E4M3 KV 和 page64。 [海光 M3 Cookbook](https://github.com/HYGON-AI/inference-cookbook-das/blob/2b1648c61ca51be3871be9a18993052a5b2693a2/docs/model-deployment/sglang/minimax-m3.md) · [PD 握手检查](https://github.com/HYGON-AI/sglang-das/blob/2c841655fe7852cde42eaaff2c1d414cf4038df1/python/sglang/srt/disaggregation/common/conn.py#L739)
 
 部署拓扑为两台各 8×BW1100（gfx938），P 为 TP8/CP8/EP8，D 为 TP8/DP8/EP8。两端用同一基础镜像，按 [README](../README.md) 同时准备 P 和 D 的运行时。交换角色时，按目标节点调整脚本中的网卡和 Router 地址，并在运行 D 的节点挂载 EAGLE3 draft。容器沿用现场的 launch.sh，使用 host 网络并挂载宿主机驱动目录、DCU/RDMA 设备和主模型。以 /public/minimax-m3 为例，将本页的脚本和 JSON 保存到该目录，源码克隆到同目录的 sglang-source/。源码另放时，修改脚本顶部的 PROJECT_ROOT。P 从脚本同目录读取两份 JSON，日志输出到各脚本同目录的 logs/。
 
@@ -26,14 +26,14 @@
 
 ### 4K 输入 / 1K 输出 · 单并发
 
-优化后结果在 12/37 两台 BW1100 上用 SGLang serving benchmark 测量。输入为 4096 个随机 token ID，生成 1024 个 token，并发 1，完成 1 条正式请求。启用 Cookbook 配置的优化前对照待实测。
+两组均在 12/37 两台 BW1100 上用 SGLang serving benchmark 测量。输入为 4096 个随机 token ID，生成 1024 个 token，并发 1，各完成 1 条正式请求。表中差异包含两套 P/D 部署配方和运行时的整体变化。
 
-| 指标 | P/D 优化前 | P/D 优化后 |
+| 指标 | 迁移前实测配方 | P/D 优化后 |
 |---|---:|---:|
-| 首 token 延迟 TTFT | | 706.95 ms |
-| 每输出 token 延迟 TPOT | | 15.27 ms |
-| 输出吞吐 | | 62.67 tok/s |
-| 端到端耗时 | | 16.33 s |
+| 首 token 延迟 TTFT | 4393.44 ms | 706.95 ms |
+| 每输出 token 延迟 TPOT | 79.15 ms | 15.27 ms |
+| 输出吞吐 | 11.99 tok/s | 62.67 tok/s |
+| 端到端耗时 | 85.36 s | 16.33 s |
 
 ## 3. P.sh
 
